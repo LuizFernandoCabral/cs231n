@@ -187,6 +187,11 @@ class FullyConnectedNet(object):
         for idx, hidden_dim in enumerate(hidden_dims):
             self.params['W' + str(idx+1)] = weight_scale * np.random.randn(previous_hidden_dim, hidden_dim)
             self.params['b' + str(idx+1)] = np.zeros(hidden_dim)
+
+            if self.use_batchnorm:
+                self.params['gamma' + str(idx)] = np.ones(previous_hidden_dim)
+                self.params['beta' + str(idx)] = np.zeros(previous_hidden_dim)
+
             previous_hidden_dim = hidden_dim
         ############################################################################
         #                             END OF YOUR CODE                             #
@@ -246,11 +251,33 @@ class FullyConnectedNet(object):
         # layer, etc.                                                              #
         ############################################################################
         cache_hidden_layer = {}
+        cache_batch_norm = {}
+        cache_dropout = {}
         hidden_layer = X
 
         for layer_idx in range(1, self.num_layers-1):
+            if self.use_batchnorm:
+                batch_idx = layer_idx - 1
+                hidden_layer, cache_batch_norm[batch_idx] = batchnorm_forward(
+                    hidden_layer,
+                    self.params['gamma' + str(batch_idx)],
+                    self.params['beta' + str(batch_idx)],
+                    self.bn_params[batch_idx] )
+
             W, b = self.params['W' + str(layer_idx)], self.params['b' + str(layer_idx)]
             hidden_layer, cache_hidden_layer[layer_idx] = affine_relu_forward(hidden_layer, W, b)
+
+            if self.use_dropout:
+                hidden_layer, cache_dropout[layer_idx] = dropout_forward(hidden_layer, self.dropout_param)
+
+
+        if self.use_batchnorm:
+            batch_idx = self.num_layers - 2
+            hidden_layer, cache_batch_norm[batch_idx] = batchnorm_forward(
+                hidden_layer,
+                self.params['gamma' + str(batch_idx)],
+                self.params['beta' + str(batch_idx)],
+                self.bn_params[batch_idx] )
 
         W, b = self.params['W' + str(self.num_layers-1)], self.params['b' + str(self.num_layers-1)]
         scores, cache = affine_forward(hidden_layer, W, b)
@@ -280,6 +307,12 @@ class FullyConnectedNet(object):
 
         dhidden, dW, db = affine_backward(dscores, cache)
 
+        if self.use_batchnorm:
+            batch_idx = self.num_layers - 2
+            dhidden, grads['gamma' + str(batch_idx)], grads['beta' + str(batch_idx)] = batchnorm_backward(
+                dhidden,
+                cache_batch_norm[batch_idx] )
+
         loss += 0.5 * self.reg * np.sum(W * W)
         dW += self.reg * W
         # print(dW)
@@ -288,12 +321,20 @@ class FullyConnectedNet(object):
         grads['b' + str(self.num_layers-1)] = db
 
         for layer_idx in reversed(range(1, self.num_layers-1)):
+            if self.use_dropout:
+                dhidden = dropout_backward(dhidden, cache_dropout[layer_idx])
+
             W = self.params['W' + str(layer_idx)]
             dhidden, dW, db = affine_relu_backward(dhidden, cache_hidden_layer[layer_idx])
 
+            if self.use_batchnorm:
+                batch_idx = layer_idx - 1
+                dhidden, grads['gamma' + str(batch_idx)], grads['beta' + str(batch_idx)] = batchnorm_backward(
+                    dhidden,
+                    cache_batch_norm[batch_idx] )
+
             loss += 0.5 * self.reg * np.sum(W * W)
             dW += self.reg * W
-
             grads['W' + str(layer_idx)] = dW
             grads['b' + str(layer_idx)] = db
         ############################################################################
